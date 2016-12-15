@@ -261,6 +261,10 @@ func (e *Engine) ConnectWithClient(client dockerclient.Client, apiClient swarmcl
 func (e *Engine) Disconnect() {
 	e.Lock()
 	defer e.Unlock()
+
+	// AMIUM-FIX
+	log.Infof("Disconnecting engine %v:%v with %v", e.ID, e.IP, e.Containers)
+
 	// Resource clean up should be done only once
 	if e.state == stateDisconnected {
 		return

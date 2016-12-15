@@ -1,10 +1,14 @@
 package cluster
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"io/ioutil"
 	"sync"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	apitypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
 	"golang.org/x/net/context"
 )
@@ -21,6 +25,8 @@ func (w *Watchdog) Handle(e *Event) error {
 	if e.From != "swarm" {
 		return nil
 	}
+
+	log.Info("Retrieved an event %v for engine with ID %v", e.Status, e.Engine.ID)
 
 	switch e.Status {
 	case "engine_connect", "engine_reconnect":
@@ -121,7 +127,40 @@ func (w *Watchdog) rescheduleContainers(e *Engine) {
 			}
 		}
 
-		newContainer, err := w.cluster.CreateContainer(c.Config, c.Info.Name, nil)
+		// Pass auth information along if present
+		var authConfig *apitypes.AuthConfig
+		file, err := ioutil.ReadFile("/root/.docker/config.json")
+		if err == nil {
+			config := struct {
+				CredsStore  string `json:"credsStore"`
+				HttpHeaders struct {
+					XRegistryAuth string `json:"X-Registry-Auth"`
+				} `json:"HttpHeaders"`
+			}{}
+			err = json.Unmarshal(file, &config)
+			log.Infof("Config is %v\n", config)
+			if err == nil && config.HttpHeaders.XRegistryAuth != "" {
+				buf, err := base64.URLEncoding.DecodeString(config.HttpHeaders.XRegistryAuth)
+				if err != nil {
+					log.Infof("Error is %v\n", err)
+					break
+				}
+				authConfig = &apitypes.AuthConfig{}
+				json.Unmarshal(buf, authConfig)
+			} else {
+				log.Infof("Error is %v\n", err)
+			}
+		} else {
+			log.Infof("Error is %v\n", err)
+		}
+
+		if authConfig == nil {
+			log.Infof("No auth config present\n")
+		} else {
+			log.Infof("Auth config is %v\n", *authConfig)
+		}
+
+		newContainer, err := w.cluster.CreateContainer(c.Config, c.Info.Name, authConfig)
 		if err != nil {
 			log.Errorf("Failed to reschedule container %s: %v", c.ID, err)
 			// add the container back, so we can retry later
