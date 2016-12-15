@@ -26,7 +26,7 @@ func (w *Watchdog) Handle(e *Event) error {
 		return nil
 	}
 
-	log.Info("Retrieved an event %v for engine with ID %v", e.Status, e.Engine.ID)
+	log.Infof("Retrieved an event %v for engine with ID %v", e.Status, e.Engine.ID)
 
 	switch e.Status {
 	case "engine_connect", "engine_reconnect":
@@ -129,31 +129,39 @@ func (w *Watchdog) rescheduleContainers(e *Engine) {
 
 		// Pass auth information along if present
 		var authConfig *apitypes.AuthConfig
-		file, err := ioutil.ReadFile("/root/.docker/config.json")
-		if err == nil {
+		authConfig, err := func() (*apitypes.AuthConfig, error) {
+			// Use docker config
+			file, err := ioutil.ReadFile("/root/.docker/config.json")
+			if err != nil {
+				return nil, err
+			}
 			config := struct {
-				CredsStore  string `json:"credsStore"`
 				HttpHeaders struct {
 					XRegistryAuth string `json:"X-Registry-Auth"`
 				} `json:"HttpHeaders"`
 			}{}
 			err = json.Unmarshal(file, &config)
-			log.Infof("Config is %v\n", config)
-			if err == nil && config.HttpHeaders.XRegistryAuth != "" {
-				buf, err := base64.URLEncoding.DecodeString(config.HttpHeaders.XRegistryAuth)
-				if err != nil {
-					log.Infof("Error is %v\n", err)
-					break
-				}
-				authConfig = &apitypes.AuthConfig{}
-				json.Unmarshal(buf, authConfig)
-			} else {
-				log.Infof("Error is %v\n", err)
+			if err != nil {
+				return nil, err
 			}
-		} else {
-			log.Infof("Error is %v\n", err)
-		}
 
+			// Base64Decode the blob
+			log.Infof("Config is %v\n", config)
+			if config.HttpHeaders.XRegistryAuth == "" {
+				return nil, nil
+			}
+			buf, err := base64.URLEncoding.DecodeString(config.HttpHeaders.XRegistryAuth)
+			if err != nil {
+				return nil, err
+			}
+			authConfig = &apitypes.AuthConfig{}
+			err = json.Unmarshal(buf, authConfig)
+			return authConfig, err
+		}()
+
+		if err != nil {
+			log.Infof("Error retrieving local authConfig : %v\n", err)
+		}
 		if authConfig == nil {
 			log.Infof("No auth config present\n")
 		} else {
